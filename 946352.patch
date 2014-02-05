@@ -1,0 +1,33 @@
+From: Sebastian Kaspari <s.kaspari@gmail.com>
+Bug 946352 - Remove go button workaround in ToolbarComponent.commitEditingMode. r=mcomella
+
+
+diff --git a/mobile/android/base/tests/components/ToolbarComponent.java b/mobile/android/base/tests/components/ToolbarComponent.java
+index bec1078..6ce45df 100644
+--- a/mobile/android/base/tests/components/ToolbarComponent.java
++++ b/mobile/android/base/tests/components/ToolbarComponent.java
+@@ -127,23 +127,17 @@ public class ToolbarComponent extends BaseComponent {
+     }
+ 
+     public ToolbarComponent commitEditingMode() {
+         assertIsEditing();
+ 
+         WaitHelper.waitForPageLoad(new Runnable() {
+             @Override
+             public void run() {
+-                if (InputMethods.shouldDisableUrlBarUpdate(mActivity)) {
+-                    // Bug 945521 workaround: Some IMEs do not allow the go button
+-                    // to be displayed in the toolbar so we hit enter instead.
+-                    mSolo.sendKey(Solo.ENTER);
+-                } else {
+-                    mSolo.clickOnView(getGoButton());
+-                }
++                mSolo.clickOnView(getGoButton());
+             }
+         });
+         waitForNotEditing();
+ 
+         return this;
+     }
+ 
+     public ToolbarComponent dismissEditingMode() {
