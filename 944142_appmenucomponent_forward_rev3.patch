@@ -1,0 +1,323 @@
+From: Sebastian Kaspari <s.kaspari@gmail.com>
+Bug 944142 - Implement NavigationHelper.goForward for phones. r=mcomella
+
+
+diff --git a/mobile/android/base/tests/UITest.java b/mobile/android/base/tests/UITest.java
+index 507851a..f6140d0 100644
+--- a/mobile/android/base/tests/UITest.java
++++ b/mobile/android/base/tests/UITest.java
+@@ -53,16 +53,17 @@ abstract class UITest extends ActivityInstrumentationTestCase2<Activity>
+     private Assert mAsserter;
+ 
+     // Base to build hostname URLs
+     private String mBaseHostnameUrl;
+     // Base to build IP URLs
+     private String mBaseIpUrl;
+ 
+     protected AboutHomeComponent mAboutHome;
++    protected AppMenuComponent mAppMenu;
+     protected ToolbarComponent mToolbar;
+ 
+     static {
+         try {
+             sLauncherActivityClass = (Class<Activity>) Class.forName(LAUNCHER_ACTIVITY);
+         } catch (ClassNotFoundException e) {
+             throw new RuntimeException(e);
+         }
+@@ -115,16 +116,17 @@ abstract class UITest extends ActivityInstrumentationTestCase2<Activity>
+             e.printStackTrace();
+         }
+ 
+         super.tearDown();
+     }
+ 
+     private void initComponents() {
+         mAboutHome = new AboutHomeComponent(this);
++        mAppMenu = new AppMenuComponent(this);
+         mToolbar = new ToolbarComponent(this);
+     }
+ 
+     private void initHelpers() {
+         HelperInitializer.init(this);
+     }
+ 
+     @Override
+@@ -158,16 +160,19 @@ abstract class UITest extends ActivityInstrumentationTestCase2<Activity>
+     }
+ 
+     @Override
+     public BaseComponent getComponent(final ComponentType type) {
+         switch (type) {
+             case ABOUTHOME:
+                 return mAboutHome;
+ 
++            case APPMENU:
++                return mAppMenu;
++
+             case TOOLBAR:
+                 return mToolbar;
+ 
+             default:
+                 fail("Unknown component type, " + type + ".");
+                 return null; // Should not reach this statement but required by javac.
+         }
+     }
+diff --git a/mobile/android/base/tests/UITestContext.java b/mobile/android/base/tests/UITestContext.java
+index 47a40f4..431b510 100644
+--- a/mobile/android/base/tests/UITestContext.java
++++ b/mobile/android/base/tests/UITestContext.java
+@@ -16,16 +16,17 @@ import android.app.Instrumentation;
+ 
+ /**
+  * Interface to the global information about a UITest environment.
+  */
+ public interface UITestContext {
+ 
+     public static enum ComponentType {
+         ABOUTHOME,
++        APPMENU,
+         TOOLBAR
+     }
+ 
+     public Activity getActivity();
+     public Solo getSolo();
+     public Assert getAsserter();
+     public Driver getDriver();
+     public Actions getActions();
+diff --git a/mobile/android/base/tests/components/AppMenuComponent.java b/mobile/android/base/tests/components/AppMenuComponent.java
+new file mode 100644
+index 0000000..bb8683e
+--- /dev/null
++++ b/mobile/android/base/tests/components/AppMenuComponent.java
+@@ -0,0 +1,140 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.gecko.tests.components;
++
++import static org.mozilla.gecko.tests.helpers.AssertionHelper.*;
++
++import org.mozilla.gecko.menu.MenuItemActionBar;
++import org.mozilla.gecko.menu.MenuItemDefault;
++import org.mozilla.gecko.tests.helpers.*;
++import org.mozilla.gecko.tests.UITestContext;
++import org.mozilla.gecko.util.HardwareUtils;
++import org.mozilla.gecko.R;
++
++import com.jayway.android.robotium.solo.Condition;
++import com.jayway.android.robotium.solo.RobotiumUtils;
++import com.jayway.android.robotium.solo.Solo;
++
++import android.view.View;
++import java.util.List;
++
++/**
++ * A class representing any interactions that take place on the app menu.
++ */
++public class AppMenuComponent extends BaseComponent {
++    public enum MenuItem {
++        FORWARD(R.string.forward);
++
++        private final int resourceId;
++        private String stringResource;
++
++        MenuItem(final int resourceId) {
++            this.resourceId = resourceId;
++        }
++
++        public String getString(Solo solo) {
++            if (stringResource == null) {
++                stringResource = solo.getString(resourceId);
++            }
++
++            return stringResource;
++        }
++    };
++
++    public AppMenuComponent(final UITestContext testContext) {
++        super(testContext);
++    }
++
++    private void assertMenuIsNotOpen() {
++        assertFalse("Menu is not open", isMenuOpen());
++    }
++
++    private View getOverflowMenuButtonView() {
++        return mSolo.getView(R.id.menu);
++    }
++
++    /**
++     * Try to find a MenuItemActionBar/MenuItemDefault with the given text set as contentDescription / text.
++     *
++     * Will return null when the Android legacy menu is in use.
++     *
++     * This method is dependent on not having two views with equivalent contentDescription / text.
++     */
++    private View findAppMenuItemView(String text) {
++        final List<View> views = mSolo.getViews();
++
++        final List<MenuItemActionBar> menuItemActionBarList = RobotiumUtils.filterViews(MenuItemActionBar.class, views);
++        for (MenuItemActionBar menuItem : menuItemActionBarList) {
++            if (menuItem.getContentDescription().equals(text)) {
++                return menuItem;
++            }
++        }
++
++        final List<MenuItemDefault> menuItemDefaultList = RobotiumUtils.filterViews(MenuItemDefault.class, views);
++        for (MenuItemDefault menuItem : menuItemDefaultList) {
++            if (menuItem.getText().equals(text)) {
++                return menuItem;
++            }
++        }
++
++        return null;
++    }
++
++    public void pressMenuItem(MenuItem menuItem) {
++        openAppMenu();
++
++        final String text = menuItem.getString(mSolo);
++        final View menuItemView = findAppMenuItemView(text);
++
++        if (menuItemView != null) {
++            assertTrue("The menu item is enabled", menuItemView.isEnabled());
++            assertEquals("The menu item is visible", View.VISIBLE, menuItemView.getVisibility());
++
++            mSolo.clickOnView(menuItemView);
++        } else {
++            // We could not find a view representing this menu item: Let's let Robotium try to
++            // locate it in the legacy Android menu (devices with Android 2.x)
++            mSolo.clickOnMenuItem(text, true);
++        }
++    }
++
++    private void openAppMenu() {
++        assertMenuIsNotOpen();
++
++        if (HardwareUtils.hasMenuButton()) {
++            mSolo.sendKey(Solo.MENU);
++        } else {
++            pressOverflowMenuButton();
++        }
++
++        waitForMenuOpen();
++    }
++
++    private void pressOverflowMenuButton() {
++        final View overflowMenuButton = getOverflowMenuButtonView();
++
++        assertNotNull("The overflow menu button is not null", overflowMenuButton);
++        assertTrue("The overflow menu button is enabled", overflowMenuButton.isEnabled());
++        assertEquals("The overflow menu button is visible", View.VISIBLE, overflowMenuButton.getVisibility());
++
++        mSolo.clickOnView(overflowMenuButton, true);
++    }
++
++    private boolean isMenuOpen() {
++        // The presence of the "New tab" menu item is our best guess about whether
++        // the menu is open or not.
++        final String newTabLabel = mSolo.getString(R.string.new_tab);
++        return mSolo.searchText(newTabLabel);
++    }
++
++    private void waitForMenuOpen() {
++        WaitHelper.waitFor("Menu to open", new Condition() {
++            @Override
++            public boolean isSatisfied() {
++                return isMenuOpen();
++            }
++        });
++    }
++}
+diff --git a/mobile/android/base/tests/helpers/NavigationHelper.java b/mobile/android/base/tests/helpers/NavigationHelper.java
+index c8d9b19..d598565 100644
+--- a/mobile/android/base/tests/helpers/NavigationHelper.java
++++ b/mobile/android/base/tests/helpers/NavigationHelper.java
+@@ -1,16 +1,17 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ package org.mozilla.gecko.tests.helpers;
+ 
+ import static org.mozilla.gecko.tests.helpers.AssertionHelper.*;
+ 
++import org.mozilla.gecko.tests.components.AppMenuComponent;
+ import org.mozilla.gecko.tests.components.ToolbarComponent;
+ import org.mozilla.gecko.tests.UITestContext;
+ import org.mozilla.gecko.tests.UITestContext.ComponentType;
+ 
+ import com.jayway.android.robotium.solo.Solo;
+ 
+ import android.text.TextUtils;
+ 
+@@ -18,21 +19,23 @@ import android.text.TextUtils;
+  * Provides helper functionality for navigating around the Firefox UI. These functions will often
+  * combine actions taken on multiple components to perform larger interactions.
+  */
+ final public class NavigationHelper {
+     private static UITestContext sContext;
+     private static Solo sSolo;
+ 
+     private static ToolbarComponent sToolbar;
++    private static AppMenuComponent sAppMenu;
+ 
+     protected static void init(final UITestContext context) {
+         sContext = context;
+         sSolo = context.getSolo();
+ 
++        sAppMenu = (AppMenuComponent) context.getComponent(ComponentType.APPMENU);
+         sToolbar = (ToolbarComponent) context.getComponent(ComponentType.TOOLBAR);
+     }
+ 
+     public static void enterAndLoadUrl(String url) {
+         assertNotNull("url is not null", url);
+ 
+         url = adjustUrl(url);
+         sToolbar.enterEditingMode()
+@@ -76,18 +79,17 @@ final public class NavigationHelper {
+             sToolbar.pressForwardButton(); // Waits for page load & asserts isNotEditing.
+             return;
+         }
+ 
+         sToolbar.assertIsNotEditing();
+         WaitHelper.waitForPageLoad(new Runnable() {
+             @Override
+             public void run() {
+-                // TODO: Press forward with APPMENU component
+-                throw new UnsupportedOperationException("Not yet implemented.");
++                sAppMenu.pressMenuItem(AppMenuComponent.MenuItem.FORWARD);
+             }
+         });
+     }
+ 
+     public static void reload() {
+         // TODO: On tablets, press reload in TOOLBAR. Note that this is technically
+         // an app menu item so tread carefully.
+         //       On phones, press reload in APPMENU.
+diff --git a/mobile/android/base/tests/testSessionHistory.java b/mobile/android/base/tests/testSessionHistory.java
+index a2034b7..2707f32 100644
+--- a/mobile/android/base/tests/testSessionHistory.java
++++ b/mobile/android/base/tests/testSessionHistory.java
+@@ -21,18 +21,18 @@ public class testSessionHistory extends UITest {
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_03_TITLE);
+ 
+         NavigationHelper.goBack();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_TITLE);
+ 
+         NavigationHelper.goBack();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_01_TITLE);
+ 
+-        // TODO: Implement this functionality and uncomment.
+-        /*
+         NavigationHelper.goForward();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_TITLE);
+ 
++        // TODO: Implement this functionality and uncomment.
++        /*
+         NavigationHelper.reload();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_TITLE);
+         */
+     }
+ }
