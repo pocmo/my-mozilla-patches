@@ -1,0 +1,127 @@
+From: Sebastian Kaspari <s.kaspari@gmail.com>
+Bug 944144 - Implement NavigationHelper.reload. r=mcomella
+
+
+diff --git a/mobile/android/base/tests/components/AppMenuComponent.java b/mobile/android/base/tests/components/AppMenuComponent.java
+index 3682831..75a5038 100644
+--- a/mobile/android/base/tests/components/AppMenuComponent.java
++++ b/mobile/android/base/tests/components/AppMenuComponent.java
+@@ -21,17 +21,18 @@ import android.view.View;
+ import java.util.List;
+ 
+ /**
+  * A class representing any interactions that take place on the app menu.
+  */
+ public class AppMenuComponent extends BaseComponent {
+     public enum MenuItem {
+         FORWARD(R.string.forward),
+-        NEW_TAB(R.string.new_tab);
++        NEW_TAB(R.string.new_tab),
++        RELOAD(R.string.reload);
+ 
+         private final int resourceID;
+         private String stringResource;
+ 
+         MenuItem(final int resourceID) {
+             this.resourceID = resourceID;
+         }
+ 
+diff --git a/mobile/android/base/tests/components/ToolbarComponent.java b/mobile/android/base/tests/components/ToolbarComponent.java
+index 6ce45df..ecaa998 100644
+--- a/mobile/android/base/tests/components/ToolbarComponent.java
++++ b/mobile/android/base/tests/components/ToolbarComponent.java
+@@ -79,16 +79,21 @@ public class ToolbarComponent extends BaseComponent {
+         return (ImageButton) getToolbarView().findViewById(R.id.back);
+     }
+ 
+     private ImageButton getForwardButton() {
+         DeviceHelper.assertIsTablet();
+         return (ImageButton) getToolbarView().findViewById(R.id.forward);
+     }
+ 
++    private ImageButton getReloadButton() {
++        DeviceHelper.assertIsTablet();
++        return (ImageButton) getToolbarView().findViewById(R.id.reload);
++    }
++
+     private CharSequence getTitle() {
+         return getTitleHelper(true);
+     }
+ 
+     /**
+      * Returns the title of the page. Note that this makes no assertions to Toolbar state and
+      * may return a value that may never be visible to the user. Callers likely want to use
+      * {@link assertTitle} instead.
+@@ -177,16 +182,21 @@ public class ToolbarComponent extends BaseComponent {
+         return pressButton(backButton, "back");
+     }
+ 
+     public ToolbarComponent pressForwardButton() {
+         final ImageButton forwardButton = getForwardButton();
+         return pressButton(forwardButton, "forward");
+     }
+ 
++    public  ToolbarComponent pressReloadButton() {
++        final ImageButton reloadButton = getReloadButton();
++        return pressButton(reloadButton, "reload");
++    }
++
+     private ToolbarComponent pressButton(final View view, final String buttonName) {
+         assertNotNull("The " + buttonName + " button View is not null", view);
+         assertTrue("The " + buttonName + " button is enabled", view.isEnabled());
+         assertEquals("The " + buttonName + " button is visible",
+                 View.VISIBLE, view.getVisibility());
+         assertIsNotEditing();
+ 
+         WaitHelper.waitForPageLoad(new Runnable() {
+diff --git a/mobile/android/base/tests/helpers/NavigationHelper.java b/mobile/android/base/tests/helpers/NavigationHelper.java
+index 5b8b44f..7892db6 100644
+--- a/mobile/android/base/tests/helpers/NavigationHelper.java
++++ b/mobile/android/base/tests/helpers/NavigationHelper.java
+@@ -85,14 +85,22 @@ final public class NavigationHelper {
+             @Override
+             public void run() {
+                 sAppMenu.pressMenuItem(AppMenuComponent.MenuItem.FORWARD);
+             }
+         });
+     }
+ 
+     public static void reload() {
+-        // TODO: On tablets, press reload in TOOLBAR. Note that this is technically
+-        // an app menu item so tread carefully.
+-        //       On phones, press reload in APPMENU.
+-        throw new UnsupportedOperationException("Not yet implemented.");
++        if (DeviceHelper.isTablet()) {
++            sToolbar.pressReloadButton();
++            return;
++        }
++
++        sToolbar.assertIsNotEditing();
++        WaitHelper.waitForPageLoad(new Runnable() {
++            @Override
++            public void run() {
++                sAppMenu.pressMenuItem(AppMenuComponent.MenuItem.RELOAD);
++            }
++        });
+     }
+ }
+diff --git a/mobile/android/base/tests/testSessionHistory.java b/mobile/android/base/tests/testSessionHistory.java
+index 2707f32..656d118 100644
+--- a/mobile/android/base/tests/testSessionHistory.java
++++ b/mobile/android/base/tests/testSessionHistory.java
+@@ -24,15 +24,12 @@ public class testSessionHistory extends UITest {
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_TITLE);
+ 
+         NavigationHelper.goBack();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_01_TITLE);
+ 
+         NavigationHelper.goForward();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_TITLE);
+ 
+-        // TODO: Implement this functionality and uncomment.
+-        /*
+         NavigationHelper.reload();
+         mToolbar.assertTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_TITLE);
+-        */
+     }
+ }
