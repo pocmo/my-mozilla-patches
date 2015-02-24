@@ -1,0 +1,118 @@
+From: Sebastian Kaspari <s.kaspari@gmail.com>
+Bug 1135111 - Add test to ensure that the toolbar in reader mode displays the original page url. r=mcomella
+
+
+diff --git a/mobile/android/base/tests/StringHelper.java b/mobile/android/base/tests/StringHelper.java
+index e9866e6..18fe613 100644
+--- a/mobile/android/base/tests/StringHelper.java
++++ b/mobile/android/base/tests/StringHelper.java
+@@ -107,16 +107,17 @@ public class StringHelper {
+     public static final String ROBOCOP_LOGIN_URL = "/robocop/robocop_login.html";
+     public static final String ROBOCOP_POPUP_URL = "/robocop/robocop_popup.html";
+     public static final String ROBOCOP_OFFLINE_STORAGE_URL = "/robocop/robocop_offline_storage.html";
+     public static final String ROBOCOP_PICTURE_LINK_URL = "/robocop/robocop_picture_link.html";
+     public static final String ROBOCOP_SEARCH_URL = "/robocop/robocop_search.html";
+     public static final String ROBOCOP_TEXT_PAGE_URL = "/robocop/robocop_text_page.html";
+     public static final String ROBOCOP_ADOBE_FLASH_URL = "/robocop/robocop_adobe_flash.html";
+     public static final String ROBOCOP_INPUT_URL = "/robocop/robocop_input.html";
++    public static final String ROBOCOP_READER_MODE_BASIC_ARTICLE = "/robocop/reader_mode_pages/basic_article.html";
+ 
+     private static final String ROBOCOP_JS_HARNESS_URL = "/robocop/robocop_javascript.html";
+ 
+     /**
+      * Build a URL for loading a Javascript file in the Robocop Javascript
+      * harness.
+      * <p>
+      * We append a random slug to avoid caching: see
+diff --git a/mobile/android/base/tests/components/ToolbarComponent.java b/mobile/android/base/tests/components/ToolbarComponent.java
+index 3b795b6..6129a21 100644
+--- a/mobile/android/base/tests/components/ToolbarComponent.java
++++ b/mobile/android/base/tests/components/ToolbarComponent.java
+@@ -108,16 +108,21 @@ public class ToolbarComponent extends BaseComponent {
+         DeviceHelper.assertIsTablet();
+         return (ImageButton) getToolbarView().findViewById(R.id.forward);
+     }
+ 
+     private ImageButton getReloadButton() {
+         DeviceHelper.assertIsTablet();
+         return (ImageButton) getToolbarView().findViewById(R.id.reload);
+     }
++
++    private View getReaderModeButton() {
++        return getToolbarView().findViewById(R.id.page_action_layout);
++    }
++
+     /**
+      * Returns the View for the edit cancel button in the browser toolbar.
+      */
+     private View getEditCancelButton() {
+         return getToolbarView().findViewById(R.id.edit_cancel);
+     }
+ 
+     private String getTitle() {
+@@ -219,16 +224,21 @@ public class ToolbarComponent extends BaseComponent {
+         return pressButton(forwardButton, "forward");
+     }
+ 
+     public ToolbarComponent pressReloadButton() {
+         final ImageButton reloadButton = getReloadButton();
+         return pressButton(reloadButton, "reload");
+     }
+ 
++    public ToolbarComponent pressReaderModeButton() {
++        final View readerModeButton = getReaderModeButton();
++        return pressButton(readerModeButton, "reader mode");
++    }
++
+     private ToolbarComponent pressButton(final View view, final String buttonName) {
+         fAssertNotNull("The " + buttonName + " button View is not null", view);
+         fAssertTrue("The " + buttonName + " button is enabled", view.isEnabled());
+         fAssertEquals("The " + buttonName + " button is visible",
+                 View.VISIBLE, view.getVisibility());
+         assertIsNotEditing();
+ 
+         WaitHelper.waitForPageLoad(new Runnable() {
+diff --git a/mobile/android/base/tests/robocop.ini b/mobile/android/base/tests/robocop.ini
+index edb6176..55eff26 100644
+--- a/mobile/android/base/tests/robocop.ini
++++ b/mobile/android/base/tests/robocop.ini
+@@ -147,16 +147,17 @@ skip-if = android_version == "10"
+ [testEventDispatcher]
+ [testGeckoRequest]
+ [testInputConnection]
+ # disabled on Android 2.3; bug 1025968
+ skip-if = android_version == "10"
+ [testJavascriptBridge]
+ [testNativeCrypto]
+ [testSessionHistory]
++[testReaderModeTitle]
+ 
+ # testSelectionHandler disabled on Android 2.3 by trailing skip-if, due to bug 980074
+ [testSelectionHandler]
+ skip-if = android_version == "10"
+ 
+ # testInputSelections disabled on Android 2.3 by trailing skip-if, due to bug 980074
+ [testInputSelections]
+ skip-if = android_version == "10"
+diff --git a/mobile/android/base/tests/testReaderModeTitle.java b/mobile/android/base/tests/testReaderModeTitle.java
+new file mode 100644
+index 0000000..ee797c8
+--- /dev/null
++++ b/mobile/android/base/tests/testReaderModeTitle.java
+@@ -0,0 +1,16 @@
++package org.mozilla.gecko.tests;
++
++/**
++ * This tests ensures that the toolbar in reader mode displays the original page url.
++ */
++public class testReaderModeTitle extends UITest {
++    public void testReaderModeTitle() {
++        mToolbar.enterEditingMode();
++        mToolbar.enterUrl(getAbsoluteHostnameUrl(StringHelper.ROBOCOP_READER_MODE_BASIC_ARTICLE));
++        mToolbar.commitEditingMode();
++
++        mToolbar.pressReaderModeButton();
++
++        mToolbar.assertTitle(StringHelper.ROBOCOP_READER_MODE_BASIC_ARTICLE);
++    }
++}
