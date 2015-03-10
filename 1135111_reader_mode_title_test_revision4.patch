@@ -1,0 +1,193 @@
+From: Sebastian Kaspari <s.kaspari@gmail.com>
+Bug 1135111 - Add test to ensure that the toolbar in reader mode displays the original page url. r=mcomella
+
+
+diff --git a/mobile/android/base/tests/StringHelper.java b/mobile/android/base/tests/StringHelper.java
+index 2e42f4f..fb0f9ef 100644
+--- a/mobile/android/base/tests/StringHelper.java
++++ b/mobile/android/base/tests/StringHelper.java
+@@ -108,16 +108,17 @@ public class StringHelper {
+     public static final String ROBOCOP_LOGIN_URL = "/robocop/robocop_login.html";
+     public static final String ROBOCOP_POPUP_URL = "/robocop/robocop_popup.html";
+     public static final String ROBOCOP_OFFLINE_STORAGE_URL = "/robocop/robocop_offline_storage.html";
+     public static final String ROBOCOP_PICTURE_LINK_URL = "/robocop/robocop_picture_link.html";
+     public static final String ROBOCOP_SEARCH_URL = "/robocop/robocop_search.html";
+     public static final String ROBOCOP_TEXT_PAGE_URL = "/robocop/robocop_text_page.html";
+     public static final String ROBOCOP_ADOBE_FLASH_URL = "/robocop/robocop_adobe_flash.html";
+     public static final String ROBOCOP_INPUT_URL = "/robocop/robocop_input.html";
++    public static final String ROBOCOP_READER_MODE_BASIC_ARTICLE = "/robocop/reader_mode_pages/basic_article.html";
+ 
+     private static final String ROBOCOP_JS_HARNESS_URL = "/robocop/robocop_javascript.html";
+ 
+     /**
+      * Build a URL for loading a Javascript file in the Robocop Javascript
+      * harness.
+      * <p>
+      * We append a random slug to avoid caching: see
+@@ -264,9 +265,12 @@ public class StringHelper {
+ 
+     public static final String LOGIN_MESSAGE = "Save password";
+     public static final String LOGIN_ALLOW = "Save";
+     public static final String LOGIN_DENY = "Don't save";
+ 
+     public static final String POPUP_MESSAGE = "prevented this site from opening";
+     public static final String POPUP_ALLOW = "Show";
+     public static final String POPUP_DENY = "Don't show";
++
++    // Strings used as content description, e.g. for ImageButtons
++    public static final String CONTENT_DESCRIPTION_READER_MODE_BUTTON = "Enter Reader View";
+ }
+diff --git a/mobile/android/base/tests/components/ToolbarComponent.java b/mobile/android/base/tests/components/ToolbarComponent.java
+index 3b795b6..724da9d 100644
+--- a/mobile/android/base/tests/components/ToolbarComponent.java
++++ b/mobile/android/base/tests/components/ToolbarComponent.java
+@@ -11,16 +11,17 @@ import static org.mozilla.gecko.tests.helpers.AssertionHelper.fAssertTrue;
+ 
+ import org.mozilla.gecko.NewTabletUI;
+ import org.mozilla.gecko.R;
+ import org.mozilla.gecko.tests.StringHelper;
+ import org.mozilla.gecko.tests.UITestContext;
+ import org.mozilla.gecko.tests.helpers.DeviceHelper;
+ import org.mozilla.gecko.tests.helpers.NavigationHelper;
+ import org.mozilla.gecko.tests.helpers.WaitHelper;
++import org.mozilla.gecko.toolbar.PageActionLayout;
+ 
+ import android.view.View;
+ import android.widget.EditText;
+ import android.widget.ImageButton;
+ import android.widget.TextView;
+ 
+ import com.jayway.android.robotium.solo.Condition;
+ import com.jayway.android.robotium.solo.Solo;
+@@ -108,16 +109,35 @@ public class ToolbarComponent extends BaseComponent {
+         DeviceHelper.assertIsTablet();
+         return (ImageButton) getToolbarView().findViewById(R.id.forward);
+     }
+ 
+     private ImageButton getReloadButton() {
+         DeviceHelper.assertIsTablet();
+         return (ImageButton) getToolbarView().findViewById(R.id.reload);
+     }
++
++    private PageActionLayout getPageActionLayout() {
++        return (PageActionLayout) getToolbarView().findViewById(R.id.page_action_layout);
++    }
++
++    private ImageButton getReaderModeButton() {
++        final PageActionLayout pageActionLayout = getPageActionLayout();
++        final int count = pageActionLayout.getChildCount();
++
++        for (int i = 0; i < count; i++) {
++            final View view = pageActionLayout.getChildAt(i);
++            if (StringHelper.CONTENT_DESCRIPTION_READER_MODE_BUTTON.equals(view.getContentDescription())) {
++                return (ImageButton) view;
++            }
++        }
++
++        return null;
++    }
++
+     /**
+      * Returns the View for the edit cancel button in the browser toolbar.
+      */
+     private View getEditCancelButton() {
+         return getToolbarView().findViewById(R.id.edit_cancel);
+     }
+ 
+     private String getTitle() {
+@@ -219,16 +239,23 @@ public class ToolbarComponent extends BaseComponent {
+         return pressButton(forwardButton, "forward");
+     }
+ 
+     public ToolbarComponent pressReloadButton() {
+         final ImageButton reloadButton = getReloadButton();
+         return pressButton(reloadButton, "reload");
+     }
+ 
++    public ToolbarComponent pressReaderModeButton() {
++        final ImageButton readerModeButton = waitForReaderModeButton();
++        pressButton(readerModeButton, "reader mode");
++
++        return this;
++    }
++
+     private ToolbarComponent pressButton(final View view, final String buttonName) {
+         fAssertNotNull("The " + buttonName + " button View is not null", view);
+         fAssertTrue("The " + buttonName + " button is enabled", view.isEnabled());
+         fAssertEquals("The " + buttonName + " button is visible",
+                 View.VISIBLE, view.getVisibility());
+         assertIsNotEditing();
+ 
+         WaitHelper.waitForPageLoad(new Runnable() {
+@@ -254,12 +281,27 @@ public class ToolbarComponent extends BaseComponent {
+         WaitHelper.waitFor("Toolbar to exit editing mode", new Condition() {
+             @Override
+             public boolean isSatisfied() {
+                 return !isEditing();
+             }
+         });
+     }
+ 
++    private ImageButton waitForReaderModeButton() {
++        final ImageButton[] readerModeButton = new ImageButton[1];
++
++        // We are waiting up to 30 seconds instead of the default waiting time
++        // because reader mode parsing can take quite some time on slower devices
++        WaitHelper.waitFor("the Reader mode button to be visible", new Condition() {
++            @Override
++            public boolean isSatisfied() {
++                return (readerModeButton[0] = getReaderModeButton()) != null;
++            }
++        }, 30000);
++
++        return readerModeButton[0];
++    }
++
+     private boolean isUrlEditTextSelected() {
+         return getUrlEditText().isSelected();
+     }
+ }
+diff --git a/mobile/android/base/tests/robocop.ini b/mobile/android/base/tests/robocop.ini
+index 7a8b20b..c476866 100644
+--- a/mobile/android/base/tests/robocop.ini
++++ b/mobile/android/base/tests/robocop.ini
+@@ -136,16 +136,17 @@ skip-if = android_version == "10"
+ [testBackButtonInEditMode]
+ [testEventDispatcher]
+ [testGeckoRequest]
+ [testInputConnection]
+ # disabled on Android 2.3; bug 1025968
+ skip-if = android_version == "10"
+ [testJavascriptBridge]
+ [testNativeCrypto]
++[testReaderModeTitle]
+ [testSessionHistory]
+ 
+ # testSelectionHandler disabled on Android 2.3 by trailing skip-if, due to bug 980074
+ [testSelectionHandler]
+ skip-if = android_version == "10"
+ 
+ # testInputSelections disabled on Android 2.3 by trailing skip-if, due to bug 980074
+ [testInputSelections]
+diff --git a/mobile/android/base/tests/testReaderModeTitle.java b/mobile/android/base/tests/testReaderModeTitle.java
+new file mode 100644
+index 0000000..1001ebe
+--- /dev/null
++++ b/mobile/android/base/tests/testReaderModeTitle.java
+@@ -0,0 +1,16 @@
++package org.mozilla.gecko.tests;
++
++import org.mozilla.gecko.tests.helpers.NavigationHelper;
++
++/**
++ * This tests ensures that the toolbar in reader mode displays the original page url.
++ */
++public class testReaderModeTitle extends UITest {
++    public void testReaderModeTitle() {
++        NavigationHelper.enterAndLoadUrl(StringHelper.ROBOCOP_READER_MODE_BASIC_ARTICLE);
++
++        mToolbar.pressReaderModeButton();
++
++        mToolbar.assertTitle(StringHelper.ROBOCOP_READER_MODE_BASIC_ARTICLE);
++    }
++}
