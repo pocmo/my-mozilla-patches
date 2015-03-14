@@ -1,0 +1,29 @@
+From: Sebastian Kaspari <s.kaspari@gmail.com>
+Bug 1143280 - SearchBar: Replace deprecated Resources.getDrawable() call with new version. r=?
+
+
+diff --git a/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java b/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
+index 4798e59..0ffaedc 100644
+--- a/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
++++ b/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
+@@ -105,18 +105,18 @@ public class SearchBar extends FrameLayout {
+         clearButton.setOnClickListener(new View.OnClickListener() {
+             @Override
+             public void onClick(View v) {
+                 editText.setText("");
+             }
+         });
+         engineIcon = (ImageView) findViewById(R.id.engine_icon);
+ 
+-        focusedBackground = getResources().getDrawable(R.drawable.edit_text_focused);
+-        defaultBackground = getResources().getDrawable(R.drawable.edit_text_default);
++        focusedBackground = getResources().getDrawable(R.drawable.edit_text_focused, null);
++        defaultBackground = getResources().getDrawable(R.drawable.edit_text_default, null);
+ 
+         inputMethodManager = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
+     }
+ 
+     public void setText(String text) {
+         editText.setText(text);
+ 
+         // Move cursor to end of search input.
