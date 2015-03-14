@@ -1,0 +1,59 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1426357350 -3600
+#      Sat Mar 14 19:22:30 2015 +0100
+# Node ID 2f68187023b081bdacc68a0fd59804e8f87a1ee9
+# Parent  fe59d32386558d61f6f09afe7e6b72b2cb04cae6
+Bug 1143280 - SearchBar: Replace deprecated Resources.getDrawable() call with new version. r=rnewman
+
+diff --git a/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java b/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
+--- a/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
++++ b/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
+@@ -6,22 +6,24 @@ package org.mozilla.search.autocomplete;
+ 
+ import org.mozilla.gecko.R;
+ import org.mozilla.gecko.Telemetry;
+ import org.mozilla.gecko.TelemetryContract;
+ import org.mozilla.gecko.gfx.BitmapUtils;
+ import org.mozilla.search.providers.SearchEngine;
+ 
+ import android.content.Context;
++import android.content.res.Resources;
+ import android.graphics.Bitmap;
+ import android.graphics.Color;
+ import android.graphics.PorterDuff;
+ import android.graphics.PorterDuffColorFilter;
+ import android.graphics.drawable.BitmapDrawable;
+ import android.graphics.drawable.Drawable;
++import android.support.v4.content.res.ResourcesCompat;
+ import android.text.Editable;
+ import android.text.TextWatcher;
+ import android.util.AttributeSet;
+ import android.view.KeyEvent;
+ import android.view.LayoutInflater;
+ import android.view.MotionEvent;
+ import android.view.View;
+ import android.view.inputmethod.EditorInfo;
+@@ -105,18 +107,20 @@ public class SearchBar extends FrameLayo
+         clearButton.setOnClickListener(new View.OnClickListener() {
+             @Override
+             public void onClick(View v) {
+                 editText.setText("");
+             }
+         });
+         engineIcon = (ImageView) findViewById(R.id.engine_icon);
+ 
+-        focusedBackground = getResources().getDrawable(R.drawable.edit_text_focused);
+-        defaultBackground = getResources().getDrawable(R.drawable.edit_text_default);
++        Resources.Theme theme = context.getTheme();
++
++        focusedBackground = ResourcesCompat.getDrawable(getResources(), R.drawable.edit_text_focused, theme);
++        defaultBackground = ResourcesCompat.getDrawable(getResources(), R.drawable.edit_text_default, theme);
+ 
+         inputMethodManager = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
+     }
+ 
+     public void setText(String text) {
+         editText.setText(text);
+ 
+         // Move cursor to end of search input.
