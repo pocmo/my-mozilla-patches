@@ -1,0 +1,345 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1426434262 -3600
+#      Sun Mar 15 16:44:22 2015 +0100
+# Node ID 3c85739d7f05abd632a4d3364d5a1ce1f3d40335
+# Parent  af68c9c0e90385e01719c7911c49fec181509f76
+Bug 1126048 - Add test to ensure state is correct when switching to loading pages. r=mcomella
+
+diff --git a/mobile/android/base/tests/StringHelper.java b/mobile/android/base/tests/StringHelper.java
+--- a/mobile/android/base/tests/StringHelper.java
++++ b/mobile/android/base/tests/StringHelper.java
+@@ -109,16 +109,17 @@ public class StringHelper {
+     public static final String ROBOCOP_POPUP_URL = "/robocop/robocop_popup.html";
+     public static final String ROBOCOP_OFFLINE_STORAGE_URL = "/robocop/robocop_offline_storage.html";
+     public static final String ROBOCOP_PICTURE_LINK_URL = "/robocop/robocop_picture_link.html";
+     public static final String ROBOCOP_SEARCH_URL = "/robocop/robocop_search.html";
+     public static final String ROBOCOP_TEXT_PAGE_URL = "/robocop/robocop_text_page.html";
+     public static final String ROBOCOP_ADOBE_FLASH_URL = "/robocop/robocop_adobe_flash.html";
+     public static final String ROBOCOP_INPUT_URL = "/robocop/robocop_input.html";
+     public static final String ROBOCOP_READER_MODE_BASIC_ARTICLE = "/robocop/reader_mode_pages/basic_article.html";
++    public static final String ROBOCOP_LINK_TO_SLOW_LOADING = "/robocop/robocop_link_to_slow_loading.html";
+ 
+     private static final String ROBOCOP_JS_HARNESS_URL = "/robocop/robocop_javascript.html";
+ 
+     /**
+      * Build a URL for loading a Javascript file in the Robocop Javascript
+      * harness.
+      * <p>
+      * We append a random slug to avoid caching: see
+diff --git a/mobile/android/base/tests/UITest.java b/mobile/android/base/tests/UITest.java
+--- a/mobile/android/base/tests/UITest.java
++++ b/mobile/android/base/tests/UITest.java
+@@ -9,16 +9,17 @@ import org.mozilla.gecko.Assert;
+ import org.mozilla.gecko.BrowserApp;
+ import org.mozilla.gecko.Driver;
+ import org.mozilla.gecko.GeckoAppShell;
+ import org.mozilla.gecko.GeckoEvent;
+ import org.mozilla.gecko.tests.components.AboutHomeComponent;
+ import org.mozilla.gecko.tests.components.AppMenuComponent;
+ import org.mozilla.gecko.tests.components.BaseComponent;
+ import org.mozilla.gecko.tests.components.GeckoViewComponent;
++import org.mozilla.gecko.tests.components.TabStripComponent;
+ import org.mozilla.gecko.tests.components.ToolbarComponent;
+ import org.mozilla.gecko.tests.helpers.HelperInitializer;
+ 
+ import android.content.Intent;
+ import android.text.TextUtils;
+ 
+ import com.jayway.android.robotium.solo.Solo;
+ 
+@@ -36,16 +37,17 @@ abstract class UITest extends BaseRoboco
+ 
+     private static final String JUNIT_FAILURE_MSG = "A JUnit method was called. Make sure " +
+         "you are using AssertionHelper to make assertions. Try `fAssert*(...);`";
+ 
+     protected AboutHomeComponent mAboutHome;
+     protected AppMenuComponent mAppMenu;
+     protected GeckoViewComponent mGeckoView;
+     protected ToolbarComponent mToolbar;
++    protected TabStripComponent mTabStrip;
+ 
+     @Override
+     protected void setUp() throws Exception {
+         super.setUp();
+ 
+         // Helpers depend on components so initialize them first.
+         initComponents();
+         initHelpers();
+@@ -88,16 +90,17 @@ abstract class UITest extends BaseRoboco
+         }
+     }
+ 
+     private void initComponents() {
+         mAboutHome = new AboutHomeComponent(this);
+         mAppMenu = new AppMenuComponent(this);
+         mGeckoView = new GeckoViewComponent(this);
+         mToolbar = new ToolbarComponent(this);
++        mTabStrip = new TabStripComponent(this);
+     }
+ 
+     private void initHelpers() {
+         HelperInitializer.init(this);
+     }
+ 
+     @Override
+     public Solo getSolo() {
+diff --git a/mobile/android/base/tests/components/TabStripComponent.java b/mobile/android/base/tests/components/TabStripComponent.java
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/tests/components/TabStripComponent.java
+@@ -0,0 +1,33 @@
++package org.mozilla.gecko.tests.components;
++
++import android.view.View;
++
++import org.mozilla.gecko.tests.UITestContext;
++import org.mozilla.gecko.tests.helpers.DeviceHelper;
++import org.mozilla.gecko.widget.TwoWayView;
++
++import static org.mozilla.gecko.tests.helpers.AssertionHelper.*;
++
++/**
++ * A class representing any interactions that take place on the tab strip.
++ */
++public class TabStripComponent extends BaseComponent {
++    public TabStripComponent(final UITestContext testContext) {
++        super(testContext);
++    }
++
++    public void switchToTab(int index) {
++        // The tab strip is only available on tablets
++        DeviceHelper.assertIsTablet();
++
++        TwoWayView tabStrip = (TwoWayView) mSolo.getView("tab_strip");
++
++        fAssertNotNull("Tab strip is not null", tabStrip);
++        fAssertTrue(String.format("Tab strip contains at least %d tabs", index + 1), tabStrip.getChildCount() > index);
++
++        View tabView = tabStrip.getChildAt(index);
++        fAssertNotNull(String.format("Tab at index %d is not null", index), tabView);
++
++        mSolo.clickOnView(tabView);
++    }
++}
+diff --git a/mobile/android/base/tests/components/ToolbarComponent.java b/mobile/android/base/tests/components/ToolbarComponent.java
+--- a/mobile/android/base/tests/components/ToolbarComponent.java
++++ b/mobile/android/base/tests/components/ToolbarComponent.java
+@@ -79,16 +79,21 @@ public class ToolbarComponent extends Ba
+         return this;
+     }
+ 
+     public ToolbarComponent assertIsUrlEditTextNotSelected() {
+         fAssertFalse("The edit text is not selected", isUrlEditTextSelected());
+         return this;
+     }
+ 
++    public ToolbarComponent assertBackButtonIsNotEnabled() {
++        fAssertFalse("The back button is not enabled", isBackButtonEnabled());
++        return this;
++    }
++
+     /**
+      * Returns the root View for the browser toolbar.
+      */
+     private View getToolbarView() {
+         mSolo.waitForView(R.id.browser_toolbar);
+         return mSolo.getView(R.id.browser_toolbar);
+     }
+ 
+@@ -301,9 +306,13 @@ public class ToolbarComponent extends Ba
+         }, READER_MODE_WAIT_MS);
+ 
+         return readerModeButton[0];
+     }
+ 
+     private boolean isUrlEditTextSelected() {
+         return getUrlEditText().isSelected();
+     }
++
++    private boolean isBackButtonEnabled() {
++        return getBackButton().isEnabled();
++    }
+ }
+diff --git a/mobile/android/base/tests/helpers/GeckoClickHelper.java b/mobile/android/base/tests/helpers/GeckoClickHelper.java
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/tests/helpers/GeckoClickHelper.java
+@@ -0,0 +1,50 @@
++package org.mozilla.gecko.tests.helpers;
++
++import android.app.Activity;
++import android.util.DisplayMetrics;
++
++import com.jayway.android.robotium.solo.Solo;
++
++import org.mozilla.gecko.Driver;
++import org.mozilla.gecko.tests.StringHelper;
++import org.mozilla.gecko.tests.UITestContext;
++
++/**
++ * Provides helper functions for clicking elements rendered by the Gecko engine.
++ */
++public class GeckoClickHelper {
++    private static Solo sSolo;
++    private static Activity sActivity;
++    private static Driver sDriver;
++
++    protected static void init(final UITestContext context) {
++        sSolo = context.getSolo();
++        sActivity = context.getActivity();
++        sDriver = context.getDriver();
++    }
++
++    private GeckoClickHelper() { /* To disallow instantiation. */ }
++
++    /**
++     * Long press the link and select "Open Link in New Tab" from the context menu.
++     *
++     * The link should be positioned at the top of the page, at least 60px high and
++     * aligned to the middle.
++     */
++    public static void openLinkInNewTab() {
++        openLinkContextMenu();
++
++        // Click on "Open Link in New Tab"
++        sSolo.clickOnText(StringHelper.CONTEXT_MENU_ITEMS_IN_NORMAL_TAB[0]);
++    }
++
++    private static void openLinkContextMenu() {
++        DisplayMetrics dm = new DisplayMetrics();
++        sActivity.getWindowManager().getDefaultDisplay().getMetrics(dm);
++
++        sSolo.clickLongOnScreen(
++                sDriver.getGeckoLeft() + sDriver.getGeckoWidth() / 2,
++                sDriver.getGeckoTop() + 30 * dm.density
++        );
++    }
++}
+diff --git a/mobile/android/base/tests/helpers/HelperInitializer.java b/mobile/android/base/tests/helpers/HelperInitializer.java
+--- a/mobile/android/base/tests/helpers/HelperInitializer.java
++++ b/mobile/android/base/tests/helpers/HelperInitializer.java
+@@ -15,14 +15,15 @@ public final class HelperInitializer {
+ 
+     private HelperInitializer() { /* To disallow instantiation. */ }
+ 
+     public static void init(final UITestContext context) {
+         // Other helpers make assertions so init AssertionHelper first.
+         AssertionHelper.init(context);
+ 
+         DeviceHelper.init(context);
++        GeckoClickHelper.init(context);
+         GeckoHelper.init(context);
+         JavascriptBridge.init(context);
+         NavigationHelper.init(context);
+         WaitHelper.init(context);
+     }
+ }
+diff --git a/mobile/android/base/tests/robocop.ini b/mobile/android/base/tests/robocop.ini
+--- a/mobile/android/base/tests/robocop.ini
++++ b/mobile/android/base/tests/robocop.ini
+@@ -138,16 +138,17 @@ skip-if = android_version == "10"
+ [testGeckoRequest]
+ [testInputConnection]
+ # disabled on Android 2.3; bug 1025968
+ skip-if = android_version == "10"
+ [testJavascriptBridge]
+ [testNativeCrypto]
+ [testReaderModeTitle]
+ [testSessionHistory]
++[testStateWhileLoading]
+ 
+ # testSelectionHandler disabled on Android 2.3 by trailing skip-if, due to bug 980074
+ [testSelectionHandler]
+ skip-if = android_version == "10"
+ 
+ # testInputSelections disabled on Android 2.3 by trailing skip-if, due to bug 980074
+ [testInputSelections]
+ skip-if = android_version == "10"
+diff --git a/mobile/android/base/tests/robocop_link_to_slow_loading.html b/mobile/android/base/tests/robocop_link_to_slow_loading.html
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/tests/robocop_link_to_slow_loading.html
+@@ -0,0 +1,12 @@
++<html>
++<head>
++    <title>Link</title>
++    <meta name="viewport" content="initial-scale=1.0"/>
++    <meta charset="utf-8">
++</head>
++<body style="margin: 0; padding: 0">
++<div style="text-align: center; margin: 0; padding: 0">
++    <a style="font-size: 60px" href="robocop_slow_loading.html">Slow Loading Page</a>
++</div>
++</body>
++</html>
+diff --git a/mobile/android/base/tests/robocop_slow_loading.html b/mobile/android/base/tests/robocop_slow_loading.html
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/tests/robocop_slow_loading.html
+@@ -0,0 +1,22 @@
++<html>
++<head>
++    <title>Slow Loading</title>
++    <meta name="viewport" content="initial-scale=1.0"/>
++    <meta charset="utf-8">
++    <script type="text/javascript">
++
++        // Busy wait for 10 seconds (There's no sleep function in JavaScript)
++        var start = new Date();
++        var now = null;
++        do {
++            now = new Date();
++        } while (now - start < 10000);
++
++    </script>
++</head>
++<body style="margin: 0; padding: 0">
++<div style="text-align: center; margin: 0; padding: 0">
++    <h1>This page is loading very slow.</h1>
++</div>
++</body>
++</html>
+diff --git a/mobile/android/base/tests/testStateWhileLoading.java b/mobile/android/base/tests/testStateWhileLoading.java
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/tests/testStateWhileLoading.java
+@@ -0,0 +1,38 @@
++package org.mozilla.gecko.tests;
++
++import org.mozilla.gecko.tests.helpers.DeviceHelper;
++import org.mozilla.gecko.tests.helpers.GeckoClickHelper;
++import org.mozilla.gecko.tests.helpers.NavigationHelper;
++import org.mozilla.gecko.tests.helpers.WaitHelper;
++
++/**
++ * This test ensures the back/forward state is correct when switching to loading pages
++ * to prevent regressions like Bug 1124190.
++ */
++public class testStateWhileLoading extends UITest {
++    public void testStateWhileLoading() {
++        if (!DeviceHelper.isTablet()) {
++            // This test case only covers tablets currently.
++            return;
++        }
++
++        NavigationHelper.enterAndLoadUrl(StringHelper.ROBOCOP_LINK_TO_SLOW_LOADING);
++
++        GeckoClickHelper.openLinkInNewTab();
++
++        WaitHelper.waitForPageLoad(new Runnable() {
++            @Override
++            public void run() {
++                mTabStrip.switchToTab(1);
++
++                // Assert state of the back and forward button is correct after
++                // switching to the new (still loading) tab.
++                mToolbar.assertBackButtonIsNotEnabled();
++            }
++        });
++
++        // Assert that the state of the back and forward button is still correct
++        // after the page has loaded.
++        mToolbar.assertBackButtonIsNotEnabled();
++    }
++}
