@@ -1,0 +1,30 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1426425810 -3600
+#      Sun Mar 15 14:23:30 2015 +0100
+# Node ID d42cf478f3ee7b277111e20d9c1bdc660241f8ee
+# Parent  b6511a8b3b11b6547484c899340de78f8a35c509
+Bug 1143280 - Build with Android SDK Version 22. r=rnewman
+
+diff --git a/mobile/android/config/mozconfigs/common b/mobile/android/config/mozconfigs/common
+--- a/mobile/android/config/mozconfigs/common
++++ b/mobile/android/config/mozconfigs/common
+@@ -10,17 +10,17 @@
+ # much slower and we didn't want to slow down developers builds.
+ # Has no effect when MOZ_ENABLE_SZIP is not set in mobile/android/confvars.sh.
+ MOZ_SZIP_FLAGS="-D auto -f auto"
+ 
+ ac_add_options --enable-elf-hack
+ 
+ ANDROID_NDK_VERSION="r8e"
+ ANDROID_NDK_VERSION_32BIT="r8c"
+-ANDROID_SDK_VERSION="21"
++ANDROID_SDK_VERSION="22"
+ 
+ # Build Fennec
+ ac_add_options --enable-application=mobile/android
+ 
+ if test `uname -m` = 'x86_64'; then
+   ac_add_options --with-android-ndk="$topsrcdir/android-ndk"
+   ac_add_options --with-android-sdk="$topsrcdir/android-sdk-linux/platforms/android-$ANDROID_SDK_VERSION"
+ else
