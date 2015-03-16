@@ -1,0 +1,30 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1426520662 -3600
+#      Mon Mar 16 16:44:22 2015 +0100
+# Node ID 6ee61e93bfe2788ce2360a6d47ee8a09af50605f
+# Parent  04366dbf122fbd60f2bb0782c8795e59f1270ab2
+Bug 1143280 - SearchBar: Suppress deprecation warnings in constructor to allow building with API level 22. r=rnewman
+
+diff --git a/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java b/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
+--- a/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
++++ b/mobile/android/search/java/org/mozilla/search/autocomplete/SearchBar.java
+@@ -48,16 +48,18 @@ public class SearchBar extends FrameLayo
+     private boolean active;
+ 
+     public interface TextListener {
+         public void onChange(String text);
+         public void onSubmit(String text);
+         public void onFocusChange(boolean hasFocus);
+     }
+ 
++    // Deprecation warnings suppressed to allow building with API level 22
++    @SuppressWarnings("deprecation")
+     public SearchBar(Context context, AttributeSet attrs) {
+         super(context, attrs);
+ 
+         LayoutInflater.from(context).inflate(R.layout.search_bar, this);
+ 
+         editText = (EditText) findViewById(R.id.edit_text);
+         editText.addTextChangedListener(new TextWatcher() {
+             @Override
