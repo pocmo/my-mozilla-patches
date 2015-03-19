@@ -1,0 +1,58 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1426804148 -3600
+#      Thu Mar 19 23:29:08 2015 +0100
+# Node ID fafc6be295c902a027e21dfbcb6c9ab0f7fe57ce
+# Parent  71c302eac40a298b765fbdf4b7811f3ca579041c
+Bug 1142699 - testReaderModeTitle: Wait for Gecko to be ready and reduce waiting time for reader mode to 30 seconds again.
+
+diff --git a/mobile/android/base/tests/components/ToolbarComponent.java b/mobile/android/base/tests/components/ToolbarComponent.java
+--- a/mobile/android/base/tests/components/ToolbarComponent.java
++++ b/mobile/android/base/tests/components/ToolbarComponent.java
+@@ -29,20 +29,19 @@ import com.jayway.android.robotium.solo.
+ 
+ /**
+  * A class representing any interactions that take place on the Toolbar.
+  */
+ public class ToolbarComponent extends BaseComponent {
+ 
+     private static final String URL_HTTP_PREFIX = "http://";
+ 
+-    // We are waiting up to 60 seconds instead of the default waiting time
+-    // because reader mode parsing can take quite some time on slower devices
+-    // See Bug 1142699
+-    private static final int READER_MODE_WAIT_MS = 60000;
++    // We are waiting up to 30 seconds instead of the default waiting time because reader mode
++    // parsing can take quite some time on slower devices (Bug 1142699)
++    private static final int READER_MODE_WAIT_MS = 30000;
+ 
+     public ToolbarComponent(final UITestContext testContext) {
+         super(testContext);
+     }
+ 
+     public ToolbarComponent assertIsEditing() {
+         fAssertTrue("The toolbar is in the editing state", isEditing());
+         return this;
+diff --git a/mobile/android/base/tests/testReaderModeTitle.java b/mobile/android/base/tests/testReaderModeTitle.java
+--- a/mobile/android/base/tests/testReaderModeTitle.java
++++ b/mobile/android/base/tests/testReaderModeTitle.java
+@@ -1,16 +1,19 @@
+ package org.mozilla.gecko.tests;
+ 
++import org.mozilla.gecko.tests.helpers.GeckoHelper;
+ import org.mozilla.gecko.tests.helpers.NavigationHelper;
+ 
+ /**
+  * This tests ensures that the toolbar in reader mode displays the original page url.
+  */
+ public class testReaderModeTitle extends UITest {
+     public void testReaderModeTitle() {
++        GeckoHelper.blockForReady();
++
+         NavigationHelper.enterAndLoadUrl(StringHelper.ROBOCOP_READER_MODE_BASIC_ARTICLE);
+ 
+         mToolbar.pressReaderModeButton();
+ 
+         mToolbar.assertTitle(StringHelper.ROBOCOP_READER_MODE_BASIC_ARTICLE);
+     }
+ }
