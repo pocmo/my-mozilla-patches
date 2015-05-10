@@ -1,0 +1,605 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1431283398 -7200
+#      Sun May 10 20:43:18 2015 +0200
+# Node ID fb6f16f28704b9a068f89e74949881f7084c14f3
+# Parent  102d0e9aa9e1629e2b448b45ac5224c2aef87ec7
+Bug 1154473 - Tab Queue: Pre-resolve queued URLs. r=rnewman.
+
+diff --git a/mobile/android/base/BrowserApp.java b/mobile/android/base/BrowserApp.java
+--- a/mobile/android/base/BrowserApp.java
++++ b/mobile/android/base/BrowserApp.java
+@@ -926,17 +926,17 @@ public class BrowserApp extends GeckoApp
+             });
+         }
+     }
+ 
+     private void openQueuedTabs() {
+         ThreadUtils.assertNotOnUiThread();
+ 
+         int queuedTabCount = TabQueueHelper.getTabQueueLength(BrowserApp.this);
+-        TabQueueHelper.openQueuedUrls(BrowserApp.this, mProfile, TabQueueHelper.FILE_NAME, false);
++        TabQueueHelper.openQueuedUrls(BrowserApp.this, mProfile, TabQueueHelper.QUEUE_FILE_NAME, false);
+ 
+         // If there's more than one tab then also show the tabs panel.
+         if (queuedTabCount > 1) {
+             ThreadUtils.postToUiThread(new Runnable() {
+                 @Override
+                 public void run() {
+                     showNormalTabs();
+                 }
+diff --git a/mobile/android/base/GeckoApp.java b/mobile/android/base/GeckoApp.java
+--- a/mobile/android/base/GeckoApp.java
++++ b/mobile/android/base/GeckoApp.java
+@@ -14,18 +14,16 @@ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.Iterator;
+ import java.util.LinkedList;
+ import java.util.List;
+ import java.util.Locale;
+ import java.util.Map;
+ import java.util.Set;
+-import java.util.regex.Matcher;
+-import java.util.regex.Pattern;
+ 
+ import org.json.JSONArray;
+ import org.json.JSONException;
+ import org.json.JSONObject;
+ import org.mozilla.gecko.AppConstants.Versions;
+ import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
+ import org.mozilla.gecko.db.BrowserDB;
+ import org.mozilla.gecko.favicons.Favicons;
+@@ -1816,17 +1814,17 @@ public abstract class GeckoApp
+                                     String uri = intent.getDataString();
+                                     Tabs.getInstance().loadUrl(uri, Tabs.LOADURL_NEW_TAB |
+                                                                             Tabs.LOADURL_USER_ENTERED |
+                                                                             Tabs.LOADURL_EXTERNAL);
+                                 }
+                             }
+                         }, "Tabs:TabsOpened");
+ 
+-                        TabQueueHelper.openQueuedUrls(GeckoApp.this, mProfile, TabQueueHelper.FILE_NAME, true);
++                        TabQueueHelper.openQueuedUrls(GeckoApp.this, mProfile, TabQueueHelper.QUEUE_FILE_NAME, true);
+                     } else {
+                         String uri = intent.getDataString();
+                         Tabs.getInstance().loadUrl(uri, Tabs.LOADURL_NEW_TAB |
+                                                                 Tabs.LOADURL_USER_ENTERED |
+                                                                 Tabs.LOADURL_EXTERNAL);
+                     }
+                 }
+             });
+diff --git a/mobile/android/base/GeckoProfile.java b/mobile/android/base/GeckoProfile.java
+--- a/mobile/android/base/GeckoProfile.java
++++ b/mobile/android/base/GeckoProfile.java
+@@ -16,16 +16,17 @@ import java.nio.charset.Charset;
+ import java.util.Enumeration;
+ import java.util.HashMap;
+ import java.util.Hashtable;
+ import java.util.regex.Matcher;
+ import java.util.regex.Pattern;
+ 
+ import org.json.JSONException;
+ import org.json.JSONArray;
++import org.json.JSONObject;
+ import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
+ import org.mozilla.gecko.GeckoProfileDirectories.NoSuchProfileException;
+ import org.mozilla.gecko.db.BrowserDB;
+ import org.mozilla.gecko.db.LocalBrowserDB;
+ import org.mozilla.gecko.db.StubBrowserDB;
+ import org.mozilla.gecko.distribution.Distribution;
+ import org.mozilla.gecko.mozglue.ContextUtils;
+ import org.mozilla.gecko.mozglue.RobocopTarget;
+@@ -650,16 +651,26 @@ public final class GeckoProfile {
+         try {
+             jsonArray = new JSONArray(fileContent);
+         } catch (JSONException e) {
+             jsonArray = new JSONArray();
+         }
+         return jsonArray;
+     }
+ 
++    public JSONObject readJSONObjectFromFile(final String filename) {
++        try {
++            return new JSONObject(readFile(filename));
++        } catch (IOException e) {
++            return new JSONObject();
++        } catch (JSONException e) {
++            return new JSONObject();
++        }
++    }
++
+     public String readFile(String filename) throws IOException {
+         File dir = getDir();
+         if (dir == null) {
+             throw new IOException("No profile directory found");
+         }
+         File target = new File(dir, filename);
+         return readFile(target);
+     }
+diff --git a/mobile/android/base/moz.build b/mobile/android/base/moz.build
+--- a/mobile/android/base/moz.build
++++ b/mobile/android/base/moz.build
+@@ -88,16 +88,17 @@ gujar.sources += [
+     'util/MenuUtils.java',
+     'util/NativeEventListener.java',
+     'util/NativeJSContainer.java',
+     'util/NativeJSObject.java',
+     'util/NonEvictingLruCache.java',
+     'util/PrefUtils.java',
+     'util/ProxySelector.java',
+     'util/RawResource.java',
++    'util/RedirectorUtils.java',
+     'util/StringUtils.java',
+     'util/ThreadUtils.java',
+     'util/UIAsyncTask.java',
+     'util/WebActivityMapper.java',
+     'util/WindowUtils.java',
+ ]
+ gujar.extra_jars = [
+     'constants.jar',
+diff --git a/mobile/android/base/tabqueue/TabQueueHelper.java b/mobile/android/base/tabqueue/TabQueueHelper.java
+--- a/mobile/android/base/tabqueue/TabQueueHelper.java
++++ b/mobile/android/base/tabqueue/TabQueueHelper.java
+@@ -25,17 +25,18 @@ import android.text.TextUtils;
+ import android.util.Log;
+ import org.json.JSONArray;
+ import org.json.JSONException;
+ import org.json.JSONObject;
+ 
+ public class TabQueueHelper {
+     private static final String LOGTAG = "Gecko" + TabQueueHelper.class.getSimpleName();
+ 
+-    public static final String FILE_NAME = "tab_queue_url_list.json";
++    public static final String QUEUE_FILE_NAME = "tab_queue_url_list.json";
++    public static final String REDIRECT_LOOKUP_FILE_NAME = "tab_queue_redirect_lookup.json";
+     public static final String LOAD_URLS_ACTION = "TAB_QUEUE_LOAD_URLS_ACTION";
+     public static final int TAB_QUEUE_NOTIFICATION_ID = R.id.tabQueueNotification;
+ 
+     public static final String PREF_TAB_QUEUE_COUNT = "tab_queue_count";
+     public static final String PREF_TAB_QUEUE_LAUNCHES = "tab_queue_launches";
+     public static final String PREF_TAB_QUEUE_TIMES_PROMPT_SHOWN = "tab_queue_times_prompt_shown";
+ 
+     public static final int MAX_TIMES_TO_SHOW_PROMPT = 3;
+@@ -100,16 +101,29 @@ public class TabQueueHelper {
+ 
+         jsonArray.put(url);
+ 
+         profile.writeFile(filename, jsonArray.toString());
+ 
+         return jsonArray.length();
+     }
+ 
++    public static synchronized void addResolvedURL(final GeckoProfile profile, final String originalURL, final String resolvedURL) {
++        ThreadUtils.assertNotOnUiThread();
++
++        try {
++            JSONObject urlMap = profile.readJSONObjectFromFile(REDIRECT_LOOKUP_FILE_NAME);
++            urlMap.put(originalURL, resolvedURL);
++
++            profile.writeFile(REDIRECT_LOOKUP_FILE_NAME, urlMap.toString());
++        } catch (JSONException e) {
++            Log.e(LOGTAG, "Error adding url to redirect lookup file", e);
++        }
++    }
++
+     /**
+      * Remove a url from the file, if it exists.
+      * If the url exists multiple times, all instances of it will be removed.
+      * This should not be run on the UI thread.
+      *
+      * @param context
+      * @param urlToRemove URL to remove
+      * @param filename    filename to remove URL from
+@@ -204,32 +218,46 @@ public class TabQueueHelper {
+         NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+         notificationManager.cancel(TAB_QUEUE_NOTIFICATION_ID);
+ 
+         // exit early if we don't have any tabs queued
+         if (getTabQueueLength(context) < 1) {
+             return;
+         }
+ 
++        JSONObject resolvedUrls = profile.readJSONObjectFromFile(REDIRECT_LOOKUP_FILE_NAME);
+         JSONArray jsonArray = profile.readJSONArrayFromFile(filename);
+ 
+         if (jsonArray.length() > 0) {
+-            JSONObject data = new JSONObject();
+             try {
+-                data.put("urls", jsonArray);
++                JSONArray urls = new JSONArray();
++                for (int i = 0; i < jsonArray.length(); i++) {
++                    String originalUrl = jsonArray.getString(i);
++
++                    if (resolvedUrls.has(originalUrl)) {
++                        urls.put(resolvedUrls.get(originalUrl));
++                    } else {
++                        urls.put(originalUrl);
++                    }
++                }
++
++                JSONObject data = new JSONObject();
++                data.put("urls", urls);
+                 data.put("shouldNotifyTabsOpenedToJava", shouldPerformJavaScriptCallback);
++
+                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tabs:OpenMultiple", data.toString()));
+             } catch (JSONException e) {
+                 // Don't exit early as we perform cleanup at the end of this function.
+                 Log.e(LOGTAG, "Error sending tab queue data", e);
+             }
+         }
+ 
+         try {
+             profile.deleteFileFromProfileDir(filename);
++            profile.deleteFileFromProfileDir(REDIRECT_LOOKUP_FILE_NAME);
+         } catch (IllegalArgumentException e) {
+             Log.e(LOGTAG, "Error deleting Tab Queue data file.", e);
+         }
+ 
+         // TODO: Use profile shared prefs when bug 1147925 gets fixed.
+         final SharedPreferences prefs = GeckoSharedPrefs.forApp(context);
+         prefs.edit().remove(PREF_TAB_QUEUE_COUNT).apply();
+     }
+diff --git a/mobile/android/base/tabqueue/TabQueueService.java b/mobile/android/base/tabqueue/TabQueueService.java
+--- a/mobile/android/base/tabqueue/TabQueueService.java
++++ b/mobile/android/base/tabqueue/TabQueueService.java
+@@ -6,16 +6,17 @@
+ package org.mozilla.gecko.tabqueue;
+ 
+ import org.mozilla.gecko.BrowserApp;
+ import org.mozilla.gecko.GeckoProfile;
+ import org.mozilla.gecko.GeckoSharedPrefs;
+ import org.mozilla.gecko.R;
+ import org.mozilla.gecko.mozglue.ContextUtils;
+ import org.mozilla.gecko.preferences.GeckoPreferences;
++import org.mozilla.gecko.util.RedirectorUtils;
+ 
+ import android.app.Service;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.content.res.Resources;
+ import android.graphics.PixelFormat;
+ import android.os.Handler;
+@@ -62,28 +63,31 @@ public class TabQueueService extends Ser
+ 
+     private WindowManager windowManager;
+     private View toastLayout;
+     private Button openNowButton;
+     private Handler tabQueueHandler;
+     private WindowManager.LayoutParams toastLayoutParams;
+     private volatile StopServiceRunnable stopServiceRunnable;
+     private HandlerThread handlerThread;
+-    private ExecutorService executorService;
++    private ExecutorService queueExecutorService;
++    private ExecutorService resolverExecutorService;
+ 
+     @Override
+     public IBinder onBind(Intent intent) {
+         // Not used
+         return null;
+     }
+ 
+     @Override
+     public void onCreate() {
+         super.onCreate();
+-        executorService = Executors.newSingleThreadExecutor();
++
++        queueExecutorService = Executors.newSingleThreadExecutor();
++        resolverExecutorService = Executors.newSingleThreadExecutor();
+ 
+         handlerThread = new HandlerThread("TabQueueHandlerThread");
+         handlerThread.start();
+         tabQueueHandler = new Handler(handlerThread.getLooper());
+ 
+         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+ 
+         LayoutInflater layoutInflater = (LayoutInflater) getSystemService(LAYOUT_INFLATER_SERVICE);
+@@ -135,17 +139,17 @@ public class TabQueueService extends Ser
+                         // If there is no runnable around then the url has already been added to the list, so we'll
+                         // need to remove it before proceeding or that url will open multiple times.
+                         if (stopServiceRunnable != null) {
+                             tabQueueHandler.removeCallbacks(stopServiceRunnable);
+                             stopSelfResult(stopServiceRunnable.getStartId());
+                             stopServiceRunnable = null;
+                             removeView();
+                         } else {
+-                            TabQueueHelper.removeURLFromFile(applicationContext, intentUrl, TabQueueHelper.FILE_NAME);
++                            TabQueueHelper.removeURLFromFile(applicationContext, intentUrl, TabQueueHelper.QUEUE_FILE_NAME);
+                         }
+                         openNow(safeIntent.getUnsafe());
+                         stopSelfResult(startId);
+                     }
+                 });
+ 
+                 return START_REDELIVER_INTENT;
+             }
+@@ -162,17 +166,17 @@ public class TabQueueService extends Ser
+             stopServiceRunnable.run(false);
+         } else {
+             windowManager.addView(toastLayout, toastLayoutParams);
+         }
+ 
+         stopServiceRunnable = new StopServiceRunnable(startId) {
+             @Override
+             public void onRun() {
+-                addURLToTabQueue(intent, TabQueueHelper.FILE_NAME);
++                addURLToTabQueue(intent, TabQueueHelper.QUEUE_FILE_NAME);
+                 stopServiceRunnable = null;
+             }
+         };
+ 
+         openNowButton.setOnClickListener(new View.OnClickListener() {
+             @Override
+             public void onClick(final View view) {
+                 tabQueueHandler.removeCallbacks(stopServiceRunnable);
+@@ -205,33 +209,38 @@ public class TabQueueService extends Ser
+ 
+     private void addURLToTabQueue(final Intent intent, final String filename) {
+         if (intent == null) {
+             // This should never happen, but let's return silently instead of crashing if it does.
+             Log.w(LOGTAG, "Error adding URL to tab queue - invalid intent passed in.");
+             return;
+         }
+         final ContextUtils.SafeIntent safeIntent = new ContextUtils.SafeIntent(intent);
+-        final String intentData = safeIntent.getDataString();
++        final String url = safeIntent.getDataString();
+ 
+         // As we're doing disk IO, let's run this stuff in a separate thread.
+-        executorService.submit(new Runnable() {
++        queueExecutorService.submit(new Runnable() {
+             @Override
+             public void run() {
+                 Context applicationContext = getApplicationContext();
+                 final GeckoProfile profile = GeckoProfile.get(applicationContext);
+-                int tabsQueued = TabQueueHelper.queueURL(profile, intentData, filename);
++                int tabsQueued = TabQueueHelper.queueURL(profile, url, filename);
+                 TabQueueHelper.showNotification(applicationContext, tabsQueued);
+ 
+                 // Store the number of URLs queued so that we don't have to read and process the file to see if we have
+                 // any urls to open.
+                 // TODO: Use profile shared prefs when bug 1147925 gets fixed.
+                 final SharedPreferences prefs = GeckoSharedPrefs.forApp(applicationContext);
+ 
+                 prefs.edit().putInt(TabQueueHelper.PREF_TAB_QUEUE_COUNT, tabsQueued).apply();
++
++                // If this is the URL of a known redirector then try to resolve it in advance
++                if (RedirectorUtils.canBeResolved(url)) {
++                    resolverExecutorService.submit(new ResolverRunnable(getApplicationContext(), url));
++                }
+             }
+         });
+     }
+ 
+     @Override
+     public void onDestroy() {
+         super.onDestroy();
+         tabQueueHandler = null;
+@@ -265,9 +274,29 @@ public class TabQueueService extends Ser
+         }
+ 
+         public int getStartId() {
+             return startId;
+         }
+ 
+         public abstract void onRun();
+     }
++
++    private static class ResolverRunnable implements Runnable {
++        private Context applicationContext;
++        private String url;
++
++        public ResolverRunnable(Context applicationContext, String url) {
++            this.applicationContext = applicationContext;
++            this.url = url;
++        }
++
++        @Override
++        public void run() {
++            String resolvedUrl = RedirectorUtils.resolveIfNeeded(url);
++
++            if (!url.equals(resolvedUrl)) {
++                final GeckoProfile profile = GeckoProfile.get(applicationContext);
++                TabQueueHelper.addResolvedURL(profile, url, resolvedUrl);
++            }
++        }
++    }
+ }
+\ No newline at end of file
+diff --git a/mobile/android/base/util/RedirectorUtils.java b/mobile/android/base/util/RedirectorUtils.java
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/util/RedirectorUtils.java
+@@ -0,0 +1,112 @@
++package org.mozilla.gecko.util;
++
++import org.mozilla.gecko.AppConstants;
++import org.mozilla.gecko.mozglue.RobocopTarget;
++
++import java.io.IOException;
++import java.net.HttpURLConnection;
++import java.net.MalformedURLException;
++import java.net.URL;
++import java.util.HashSet;
++
++@RobocopTarget
++public class RedirectorUtils {
++    private static final String HTTP_METHOD_HEAD = "HEAD";
++    private static final String HEADER_USER_AGENT = "User-Agent";
++    private static final String HEADER_LOCATION = "Location";
++    private static final int CONNECTION_TIMEOUT = 5000;
++    private static final int READ_TIMEOUT = 5000;
++
++    private static final String REDIRECTOR_HOST_TWITTER = "t.co";
++    private static final String REDIRECTOR_HOST_GOOGLE = "goo.gl";
++    private static final String REDIRECTOR_HOST_BITLY = "bit.ly";
++    private static final String REDIRECTOR_HOST_MOZILLA = "mzl.la";
++    private static final String REDIRECTOR_HOST_TINYURL = "tinyurl.com";
++
++    private static final String DEFAULT_USER_AGENT = HardwareUtils.isTablet() ?
++            AppConstants.USER_AGENT_FENNEC_TABLET : AppConstants.USER_AGENT_FENNEC_MOBILE;
++    private static final String TWITTER_USER_AGENT = String.format(
++            "Mozilla/5.0 (Android; Linux armv7l; rv:%s) Gecko/%s Firefox Mobile/%s",
++            AppConstants.MOZ_APP_VERSION, AppConstants.MOZ_APP_VERSION, AppConstants.MOZ_APP_VERSION);
++
++    /**
++     * Lower-case list of whitelisted redirectors whose urls will be resolved when added to the queue.
++     */
++    private static HashSet<String> redirectorWhitelist = new HashSet<String>();
++    static {
++        redirectorWhitelist.add(REDIRECTOR_HOST_TWITTER);
++        redirectorWhitelist.add(REDIRECTOR_HOST_GOOGLE);
++        redirectorWhitelist.add(REDIRECTOR_HOST_BITLY);
++        redirectorWhitelist.add(REDIRECTOR_HOST_MOZILLA);
++        redirectorWhitelist.add(REDIRECTOR_HOST_TINYURL);
++    }
++
++    /**
++     * Resolves the given URL if the host is whitelisted as redirector. Returns the resolved URL or
++     * the original URL if the host is not whitelisted or an error occurred.
++     */
++    public static String resolveIfNeeded(String inputUrl) {
++        ThreadUtils.assertNotOnUiThread();
++
++        try {
++            URL url = new URL(inputUrl);
++
++            if (isWhitelistedRedirector(url)) {
++                return resolve(url, inputUrl);
++            }
++
++            return inputUrl;
++        } catch (MalformedURLException e) {
++            return inputUrl;
++        }
++    }
++
++    /**
++     * Returns true if the host of the URL is of a whitelisted redirector.
++     */
++    public static boolean canBeResolved(String inputUrl) {
++        try {
++            URL url = new URL(inputUrl);
++            return isWhitelistedRedirector(url);
++        } catch (MalformedURLException e) {
++            return false;
++        }
++    }
++
++    private static boolean isWhitelistedRedirector(URL url) {
++        return redirectorWhitelist.contains(url.getHost().toLowerCase());
++    }
++
++    private static String getUserAgent(String host) {
++        if (REDIRECTOR_HOST_TWITTER.equalsIgnoreCase(host)) {
++            return TWITTER_USER_AGENT;
++        }
++
++        return DEFAULT_USER_AGENT;
++    }
++
++    private static String resolve(URL url, String defaultValue) {
++        try {
++            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
++
++            connection.setRequestMethod(HTTP_METHOD_HEAD);
++            connection.setConnectTimeout(CONNECTION_TIMEOUT);
++            connection.setReadTimeout(READ_TIMEOUT);
++            connection.setRequestProperty(HEADER_USER_AGENT, getUserAgent(url.getHost()));
++            connection.setInstanceFollowRedirects(false);
++            connection.connect();
++
++            int responseCode = connection.getResponseCode();
++            if (responseCode >= 300 && responseCode < 400) {
++                String location = connection.getHeaderField(HEADER_LOCATION);
++                if (location != null) {
++                    return location;
++                }
++            }
++
++            return defaultValue;
++        } catch (IOException e) {
++            return defaultValue;
++        }
++    }
++}
+diff --git a/mobile/android/tests/browser/robocop/robocop.ini b/mobile/android/tests/browser/robocop/robocop.ini
+--- a/mobile/android/tests/browser/robocop/robocop.ini
++++ b/mobile/android/tests/browser/robocop/robocop.ini
+@@ -78,16 +78,17 @@ skip-if = android_version == "18"
+ # disabled on 4.3, bug 1031496
+ skip-if = android_version == "18"
+ [testPrefsObserver]
+ [testPrivateBrowsing]
+ [testPromptGridInput]
+ # bug 1001657 for 2.3 and 4.3
+ skip-if = android_version == "10" || android_version == "18"
+ [testReadingListProvider]
++[testRedirectorUtils]
+ [testSearchHistoryProvider]
+ [testSearchSuggestions]
+ # disabled on 2.3, bug 907768; on 4.3, bug 1145867
+ skip-if = android_version == "10" || android_version == "18"
+ [testSessionOOMSave]
+ # disabled on 2.3, bug 945395; on 4.3, bug 1144888
+ skip-if = android_version == "10" || android_version == "18"
+ [testSessionOOMRestore]
+diff --git a/mobile/android/tests/browser/robocop/testRedirectorUtils.java b/mobile/android/tests/browser/robocop/testRedirectorUtils.java
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/tests/browser/robocop/testRedirectorUtils.java
+@@ -0,0 +1,54 @@
++package org.mozilla.gecko.tests;
++
++import org.mozilla.gecko.util.RedirectorUtils;
++
++public class testRedirectorUtils extends BaseTest {
++    private static final String REDIRECT_GOOGLE = "http://goo.gl/EFZ6Kq";
++    private static final String REDIRECT_TWITTER = "http://t.co/SR9keWKM3m";
++    private static final String REDIRECT_MOZILLA = "http://mzl.la/1od9JML";
++    private static final String REDIRECT_BITLY = "http://bit.ly/1a0MgZ";
++    private static final String REDIRECT_TINYURL = "http://tinyurl.com/2ndfb";
++
++    private static final String RESOLVED_MOZILLA = "http://www.mozilla.org";
++    private static final String RESOLVED_MOZILLA_SLASH = "http://www.mozilla.org/";
++
++    public void testRedirectorUtils() {
++        assertIsResolvable(REDIRECT_GOOGLE);
++        assertIsResolvable(REDIRECT_TWITTER);
++        assertIsResolvable(REDIRECT_MOZILLA);
++        assertIsResolvable(REDIRECT_BITLY);
++        assertIsResolvable(REDIRECT_TINYURL);
++
++        assertIsNotResovable(RESOLVED_MOZILLA);
++
++        assertResolvesTo(REDIRECT_GOOGLE, RESOLVED_MOZILLA_SLASH);
++        assertResolvesTo(REDIRECT_TWITTER, RESOLVED_MOZILLA);
++        assertResolvesTo(REDIRECT_MOZILLA, RESOLVED_MOZILLA_SLASH);
++        assertResolvesTo(REDIRECT_BITLY, RESOLVED_MOZILLA_SLASH);
++        assertResolvesTo(REDIRECT_TINYURL, RESOLVED_MOZILLA);
++
++        assertResolvesTo(RESOLVED_MOZILLA, RESOLVED_MOZILLA);
++    }
++
++    private void assertIsResolvable(String redirectorUrl) {
++        mAsserter.ok(
++                RedirectorUtils.canBeResolved(redirectorUrl),
++                String.format("%s is resolvable", redirectorUrl),
++                null);
++    }
++
++    private void assertIsNotResovable(String redirectorUrl) {
++        mAsserter.is(
++                false,
++                RedirectorUtils.canBeResolved(redirectorUrl),
++                String.format("%s is not resolvable", redirectorUrl));
++    }
++
++    private void assertResolvesTo(String redirectorUrl, String resolvedUrl) {
++        mAsserter.is(
++            RedirectorUtils.resolveIfNeeded(redirectorUrl),
++            resolvedUrl,
++            String.format("%s resolves to %s", redirectorUrl, resolvedUrl)
++        );
++    }
++}
