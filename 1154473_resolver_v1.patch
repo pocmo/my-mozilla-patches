@@ -1,0 +1,158 @@
+# HG changeset patch
+# User Sebastian Kaspari <s.kaspari@gmail.com>
+# Date 1430772975 -7200
+#      Mon May 04 22:56:15 2015 +0200
+# Node ID 481aa833b926efa03b6df406873196955021b9c7
+# Parent  102d0e9aa9e1629e2b448b45ac5224c2aef87ec7
+imported patch 1154473-resolve
+
+diff --git a/mobile/android/base/moz.build b/mobile/android/base/moz.build
+--- a/mobile/android/base/moz.build
++++ b/mobile/android/base/moz.build
+@@ -475,16 +475,17 @@ gbjar.sources += [
+     'toolbar/ToolbarDisplayLayout.java',
+     'toolbar/ToolbarEditLayout.java',
+     'toolbar/ToolbarEditText.java',
+     'toolbar/ToolbarPrefs.java',
+     'toolbar/ToolbarProgressView.java',
+     'TouchEventInterceptor.java',
+     'updater/UpdateService.java',
+     'updater/UpdateServiceHelper.java',
++    'util/RedirectorUtils.java',
+     'Webapp.java',
+     'webapp/Allocator.java',
+     'webapp/ApkResources.java',
+     'webapp/Dispatcher.java',
+     'webapp/EventListener.java',
+     'webapp/InstallHelper.java',
+     'webapp/InstallListener.java',
+     'webapp/TaskKiller.java',
+diff --git a/mobile/android/base/tabqueue/TabQueueService.java b/mobile/android/base/tabqueue/TabQueueService.java
+--- a/mobile/android/base/tabqueue/TabQueueService.java
++++ b/mobile/android/base/tabqueue/TabQueueService.java
+@@ -6,16 +6,17 @@
+ package org.mozilla.gecko.tabqueue;
+ 
+ import org.mozilla.gecko.BrowserApp;
+ import org.mozilla.gecko.GeckoProfile;
+ import org.mozilla.gecko.GeckoSharedPrefs;
+ import org.mozilla.gecko.R;
+ import org.mozilla.gecko.mozglue.ContextUtils;
+ import org.mozilla.gecko.preferences.GeckoPreferences;
++import org.mozilla.gecko.util.RedirectorUtils;
+ 
+ import android.app.Service;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.content.res.Resources;
+ import android.graphics.PixelFormat;
+ import android.os.Handler;
+@@ -213,17 +214,18 @@ public class TabQueueService extends Ser
+         final String intentData = safeIntent.getDataString();
+ 
+         // As we're doing disk IO, let's run this stuff in a separate thread.
+         executorService.submit(new Runnable() {
+             @Override
+             public void run() {
+                 Context applicationContext = getApplicationContext();
+                 final GeckoProfile profile = GeckoProfile.get(applicationContext);
+-                int tabsQueued = TabQueueHelper.queueURL(profile, intentData, filename);
++                String resolvedUrl = RedirectorUtils.resolveIfNeeded(intentData);
++                int tabsQueued = TabQueueHelper.queueURL(profile, resolvedUrl, filename);
+                 TabQueueHelper.showNotification(applicationContext, tabsQueued);
+ 
+                 // Store the number of URLs queued so that we don't have to read and process the file to see if we have
+                 // any urls to open.
+                 // TODO: Use profile shared prefs when bug 1147925 gets fixed.
+                 final SharedPreferences prefs = GeckoSharedPrefs.forApp(applicationContext);
+ 
+                 prefs.edit().putInt(TabQueueHelper.PREF_TAB_QUEUE_COUNT, tabsQueued).apply();
+diff --git a/mobile/android/base/util/RedirectorUtils.java b/mobile/android/base/util/RedirectorUtils.java
+new file mode 100644
+--- /dev/null
++++ b/mobile/android/base/util/RedirectorUtils.java
+@@ -0,0 +1,83 @@
++package org.mozilla.gecko.util;
++
++import org.mozilla.gecko.GeckoAppShell;
++
++import java.io.IOException;
++import java.net.HttpURLConnection;
++import java.net.MalformedURLException;
++import java.net.URL;
++import java.util.HashSet;
++
++import ch.boye.httpclientandroidlib.util.TextUtils;
++
++public class RedirectorUtils {
++    private static final String HTTP_METHOD_HEAD = "HEAD";
++    private static final String HEADER_USER_AGENT = "User-Agent";
++    private static final String HEADER_LOCATION = "Location";
++    private static final int CONNECTION_TIMEOUT = 5000;
++    private static final int READ_TIMEOUT = 5000;
++
++    /**
++     * Lower-case list of whitelisted redirectors whose urls will be resolved when added to the queue.
++     */
++    private static HashSet<String> redirectorWhitelist = new HashSet<String>();
++    static {
++        redirectorWhitelist.add("goo.gl");
++        redirectorWhitelist.add("bit.ly");
++        redirectorWhitelist.add("mzl.la");
++        redirectorWhitelist.add("tinyurl.com");
++    }
++
++    /**
++     * Resolves the given URL if the host is whitelisted as redirector. Returns the resolved URL or
++     * the original URL if the host is not whitelisted or an error occurred.
++     */
++    public static String resolveIfNeeded(String inputUrl) {
++        ThreadUtils.assertNotOnUiThread();
++
++        try {
++            URL url = new URL(inputUrl);
++
++            if (isHostOfWhitelistedRedirector(url)) {
++                return resolve(url, inputUrl);
++            }
++
++            return inputUrl;
++        } catch (MalformedURLException e) {
++            return inputUrl;
++        }
++    }
++
++    private static boolean isHostOfWhitelistedRedirector(URL url) {
++        return redirectorWhitelist.contains(url.getHost().toLowerCase());
++    }
++
++    private static String getUserAgent() {
++        return GeckoAppShell.getGeckoInterface().getDefaultUAString();
++    }
++
++    private static String resolve(URL url, String defaultValue) {
++        try {
++            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
++
++            connection.setRequestMethod(HTTP_METHOD_HEAD);
++            connection.setConnectTimeout(CONNECTION_TIMEOUT);
++            connection.setReadTimeout(READ_TIMEOUT);
++            connection.setRequestProperty(HEADER_USER_AGENT, getUserAgent());
++            connection.setInstanceFollowRedirects(false);
++            connection.connect();
++
++            int responseCode = connection.getResponseCode();
++            if (responseCode >= 300 && responseCode < 400) {
++                String location = connection.getHeaderField(HEADER_LOCATION);
++                if (!TextUtils.isEmpty(location)) {
++                    return location;
++                }
++            }
++
++            return defaultValue;
++        } catch (IOException e) {
++            return defaultValue;
++        }
++    }
++}
